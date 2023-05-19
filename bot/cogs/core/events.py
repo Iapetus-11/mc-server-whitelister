@@ -1,42 +1,67 @@
-import arrow
+import time
+import traceback
+
+import discord
 from discord.ext import commands
 
-from bot.my_bot import MyBot
 from bot.utils.code import format_exception
+from bot.whitelister import Whitelister
+from bot.utils.misc import text_to_discord_file
 
 
 class Events(commands.Cog):
-    def __init__(self, bot: MyBot):
+    def __init__(self, bot: Whitelister):
         self.bot = bot
+
+        # Register event listeners
+        bot.event(self.on_event_error)
+        bot.tree.on_error = self.on_slash_command_error
 
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.logger.info("Bot is connected and ready!")
 
-    @commands.Cog.listener()
-    async def on_command_error(self, ctx: commands.Context, error: Exception):
-        if isinstance(error, commands.CommandNotFound):
-            pass
-        elif isinstance(error, commands.CommandOnCooldown):
-            retry_after_in = (
-                arrow.now().shift(seconds=error.retry_after).humanize(only_distance=True)
-            )
-            await ctx.reply(f"Cool down! You can use this command again in {retry_after_in}")
-        elif isinstance(error, commands.NotOwner):
-            await ctx.reply("This command is only available to the bot owners!")
-        else:
-            error_formatted = format_exception(error)
+    async def on_event_error(
+        self, event, *args, **kwargs
+    ):
+        # logs errors in events, such as on_message
+        event_args_repr = list(map(repr, args)) + [f'{k}={repr(v)}' for k, v in kwargs.items()]
+        event_call_repr = f"{event}({',  '.join(event_args_repr)})"
 
-            self.bot.logger.error(error_formatted)
+        self.bot.logger.error(
+            f"An exception occurred in this event call:\n{event_call_repr}", exc_info=True
+        )
 
-            debug_info = (
-                f"```\n{ctx.author} ({ctx.author.id}): {ctx.message.content}"[:200]
-                + f"``````py\n{error_formatted.replace('```', '｀｀｀')}"[: 2000 - 209]
-                + "```"
-            )
+        await self.bot.wait_until_ready()
 
-            await ctx.send(debug_info)
+        logging_channel = await self.bot.get_logging_channel()
+        await logging_channel.send(
+            f"```py\n{event_call_repr[:1920]}```",
+            file=text_to_discord_file(
+                traceback.format_exc(),
+                file_name=f"error_tb_ev_{time.time():0.0f}.txt",
+            ),
+        )
+
+    async def on_slash_command_error(self, inter: discord.Interaction, error: Exception):
+        self.bot.logger.error(
+            f"An exception occurred in the /{inter.command} command", exc_info=True
+        )
+
+        cmd_call_repr = (
+            f"```\n{inter.user} (user_id={inter.user.id}) "
+            f"(guild_id={inter.guild_id}): {inter.data}```"
+        )
+
+        logging_channel = await self.bot.get_logging_channel()
+        await logging_channel.send(
+            cmd_call_repr,
+            file=text_to_discord_file(
+                format_exception(error),
+                file_name=f"error_tb_cmd_{time.time():0.0f}.txt",
+            ),
+        )
 
 
-async def setup(bot: MyBot):
+async def setup(bot: Whitelister):
     await bot.add_cog(Events(bot))

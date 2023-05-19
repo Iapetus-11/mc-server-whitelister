@@ -1,12 +1,9 @@
 import asyncio
-from bot.my_bot import MyBot
-from bot.config import load_config
+from bot.whitelister import Whitelister
 
 
 async def main():
-    config = load_config()
-
-    bot = MyBot(config)
+    bot = Whitelister()
 
     async with bot:
         await bot.start()
